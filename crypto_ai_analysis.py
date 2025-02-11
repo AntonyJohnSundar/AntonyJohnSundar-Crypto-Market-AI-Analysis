@@ -41,6 +41,7 @@ def send_telegram_alert(message):
     requests.post(url, data=data)
 
 # Fetch valid trading symbols from Binance
+
 def get_binance_symbols():
     exchange = ccxt.binance()
     try:
@@ -52,9 +53,8 @@ def get_binance_symbols():
 
 binance_symbols = get_binance_symbols()
 
-# Validate Crypto Symbol
-def validate_crypto_symbol(symbol):
-    return symbol.lower() in binance_symbols
+# Ensure major cryptos are included
+binance_symbols.update({"bitcoin": "BTC/USDT", "btc": "BTC/USDT", "ethereum": "ETH/USDT", "eth": "ETH/USDT"})
 
 # Fetch Crypto Price from CoinGecko
 def get_crypto_price(coin):
@@ -64,12 +64,16 @@ def get_crypto_price(coin):
 
 # Fetch Top 10 Potential Gem Coins
 def find_gem_coins():
-    url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_asc&per_page=50&page=1"
-    response = requests.get(url).json()
-    coins = sorted(response, key=lambda x: (x['price_change_percentage_24h'], x['market_cap']), reverse=True)[:10]
-    return [(coin['name'], coin['symbol'], coin['price_change_percentage_24h']) for coin in coins]
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_asc&per_page=50&page=1"
+        response = requests.get(url).json()
+        coins = sorted(response, key=lambda x: (x.get('price_change_percentage_24h', 0), x.get('market_cap', 0)), reverse=True)[:10]
+        return [(coin['name'], coin['symbol'], coin.get('price_change_percentage_24h', 0)) for coin in coins]
+    except Exception as e:
+        print(f"Error fetching gem coins: {e}")
+        return []
 
-# Fetch Market Data with Binance and CoinGecko fallback
+# Fetch Market Data with Binance
 def get_market_data(symbol, timeframe='1d'):
     if symbol not in binance_symbols:
         raise ValueError("Invalid crypto symbol. Try using a different cryptocurrency.")
@@ -97,44 +101,10 @@ def analyze_trends(df):
     df['MACD_signal'] = macd.macd_signal()
     return df
 
-# Predict Next Trend
-def predict_next_trend(model, scaler, df):
-    latest_data = df.iloc[-1:][['RSI', 'SMA', 'MACD', 'MACD_signal']].values
-    latest_scaled = scaler.transform(latest_data)
-    prediction = model.predict(latest_scaled)[0][0]
-    return "Bullish 🚀" if prediction > 0.5 else "Bearish ⚠️"
-
-# Load or Train LSTM AI Model
-def get_lstm_model(df):
-    model_path = "lstm_model.h5"
-    scaler_path = "scaler.npy"
-    df = df.dropna()
-    features = ['RSI', 'SMA', 'MACD', 'MACD_signal']
-    X = df[features].values
-    scaler = MinMaxScaler()
-    X_scaled = scaler.fit_transform(X)
-    if os.path.exists(model_path) and os.path.exists(scaler_path):
-        model = load_model(model_path)
-        scaler = np.load(scaler_path, allow_pickle=True).item()
-    else:
-        model = Sequential([
-            LSTM(30, return_sequences=True, input_shape=(X_scaled.shape[1], 1)),
-            Dropout(0.1),
-            LSTM(30, return_sequences=False),
-            Dropout(0.1),
-            Dense(15),
-            Dense(1, activation='sigmoid')
-        ])
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        model.fit(X_scaled, df['close'], epochs=5, batch_size=16, verbose=0)
-        model.save(model_path)
-        np.save(scaler_path, scaler)
-    return model, scaler
-
 # Streamlit UI
 st.title("🚀 AI-Powered Crypto Analysis (Live Updates)")
 st.subheader("📊 Market Trend Analysis")
-crypto = st.text_input("Enter Crypto (e.g., bitcoin):", "bitcoin")
+crypto = st.text_input("Enter Crypto (e.g., bitcoin, eth, btc):", "bitcoin")
 
 if st.button("Analyze Now"):
     selected_crypto = crypto.lower()
@@ -145,13 +115,25 @@ if st.button("Analyze Now"):
         market_data = get_market_data(selected_crypto)
         try:
             analyzed_data = analyze_trends(market_data)
-            model, scaler = get_lstm_model(analyzed_data)
-            trend_prediction = predict_next_trend(model, scaler, analyzed_data)
             st.write(f"\n🚀 {crypto.capitalize()} Price: **${price}**")
-            st.write(f"📊 AI Trend Prediction: **{trend_prediction}**")
+            
+            # Display Market Trend Chart
+            st.subheader("📈 Market Trend")
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.plot(market_data['timestamp'], market_data['close'], label='Close Price', color='blue')
+            ax.set_xlabel("Date")
+            ax.set_ylabel("Price (USD)")
+            ax.set_title(f"{crypto.capitalize()} Market Trend")
+            ax.legend()
+            st.pyplot(fig)
+            
+            # Display Top 10 Gem Coins
             st.subheader("💎 Top 10 Potential Gem Coins")
             gem_coins = find_gem_coins()
-            for coin in gem_coins:
-                st.write(f"- {coin[0]} ({coin[1]}): {coin[2]:.2f}% 24h Change")
+            if gem_coins:
+                for coin in gem_coins:
+                    st.write(f"- {coin[0]} ({coin[1]}): {coin[2]:.2f}% 24h Change")
+            else:
+                st.write("No gem coins found. Try again later.")
         except ValueError as e:
             st.error(str(e))
