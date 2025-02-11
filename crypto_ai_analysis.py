@@ -110,8 +110,15 @@ def get_lstm_model(df):
     df = df.dropna()
     df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
     features = ['RSI', 'SMA', 'MACD', 'MACD_signal', 'Bollinger High', 'Bollinger Low', 'OBV']
+    
+    if not all(feature in df.columns for feature in features):
+        raise ValueError("Missing required features for AI model training.")
+    
     X = df[features].values
     y = df['Target'].values
+    
+    if X.shape[0] == 0:
+        raise ValueError("Insufficient data for AI model training.")
     
     scaler = MinMaxScaler()
     X_scaled = scaler.fit_transform(X)
