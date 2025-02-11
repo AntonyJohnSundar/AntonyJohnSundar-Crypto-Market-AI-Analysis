@@ -43,9 +43,14 @@ def send_telegram_alert(message):
 # Validate Crypto Symbol
 def validate_crypto_symbol(symbol):
     url = "https://api.coingecko.com/api/v3/coins/list"
-    response = requests.get(url).json()
-    valid_symbols = {coin['id'] for coin in response}
-    return symbol.lower() in valid_symbols
+    try:
+        response = requests.get(url).json()
+        if isinstance(response, list):  # Ensure response is a list
+            valid_symbols = {coin.get('id', '') for coin in response if 'id' in coin}
+            return symbol.lower() in valid_symbols
+    except Exception as e:
+        print(f"Error fetching symbol list: {e}")
+    return False  # Return False if API fails
 
 # Fetch Crypto Price from CoinGecko
 def get_crypto_price(coin):
