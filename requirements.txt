@@ -1,0 +1,10 @@
+requests
+pandas
+ccxt
+nltk
+streamlit
+numpy
+scikit-learn
+beautifulsoup4
+matplotlib
+ta
