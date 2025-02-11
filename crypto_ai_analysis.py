@@ -82,6 +82,7 @@ def get_market_data(symbol, timeframe='1d'):
         prices = response['prices']
         df = pd.DataFrame(prices, columns=['timestamp', 'close'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df['volume'] = 0  # Set default volume to avoid KeyError
         return df
     raise Exception("Failed to fetch data from both Binance and CoinGecko.")
 
@@ -95,6 +96,9 @@ def analyze_trends(df):
     bb = BollingerBands(df['close'])
     df['Bollinger High'] = bb.bollinger_hband()
     df['Bollinger Low'] = bb.bollinger_lband()
+    
+    if 'volume' not in df.columns:
+        df['volume'] = 0  # Set default volume if missing
     obv = OnBalanceVolumeIndicator(df['close'], df['volume'])
     df['OBV'] = obv.on_balance_volume()
     return df
@@ -132,13 +136,6 @@ def get_lstm_model(df):
         np.save(scaler_path, scaler)
     
     return model, scaler
-
-# Predict Next Trend
-def predict_next_trend(model, scaler, df):
-    latest_data = df.iloc[-1:][['RSI', 'SMA', 'MACD', 'MACD_signal', 'Bollinger High', 'Bollinger Low', 'OBV']].values
-    latest_scaled = scaler.transform(latest_data)
-    prediction = model.predict(latest_scaled)[0][0]
-    return "Bullish 🚀" if prediction > 0.5 else "Bearish ⚠️"
 
 # Streamlit UI
 st.title("🚀 AI-Powered Crypto Analysis (Live Updates)")
