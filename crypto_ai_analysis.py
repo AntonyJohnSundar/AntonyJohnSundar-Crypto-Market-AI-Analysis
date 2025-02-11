@@ -73,7 +73,7 @@ def find_gem_coins():
         print(f"Error fetching gem coins: {e}")
         return []
 
-# Fetch Market Data with Binance
+# Fetch Market Data with Binance and fallback to CoinGecko
 def get_market_data(symbol, timeframe='1d'):
     if symbol not in binance_symbols:
         raise ValueError("Invalid crypto symbol. Try using a different cryptocurrency.")
@@ -82,13 +82,24 @@ def get_market_data(symbol, timeframe='1d'):
     for attempt in range(5):  # Retry up to 5 times
         try:
             bars = exchange.fetch_ohlcv(binance_symbol, timeframe=timeframe, limit=200)
-            df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            return df
+            if bars:
+                df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                return df
         except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
             print(f"Binance API error. Retrying ({attempt+1}/5)...")
             time.sleep(3)
-    raise Exception("Failed to fetch data from Binance.")
+    
+    print("Switching to CoinGecko for market data...")
+    url = f"https://api.coingecko.com/api/v3/coins/{symbol.lower()}/market_chart?vs_currency=usd&days=30&interval=daily"
+    response = requests.get(url).json()
+    if 'prices' in response:
+        prices = response['prices']
+        df = pd.DataFrame(prices, columns=['timestamp', 'close'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df['volume'] = 0  # Set default volume to avoid KeyError
+        return df
+    raise Exception("Failed to fetch data from both Binance and CoinGecko.")
 
 # Apply Technical Indicators
 def analyze_trends(df):
@@ -112,8 +123,8 @@ if st.button("Analyze Now"):
         st.error("❌ Invalid cryptocurrency symbol. Try a different one.")
     else:
         price = get_crypto_price(selected_crypto)
-        market_data = get_market_data(selected_crypto)
         try:
+            market_data = get_market_data(selected_crypto)
             analyzed_data = analyze_trends(market_data)
             st.write(f"\n🚀 {crypto.capitalize()} Price: **${price}**")
             
