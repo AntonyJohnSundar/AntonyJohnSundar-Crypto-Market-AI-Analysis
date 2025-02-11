@@ -40,22 +40,24 @@ def send_telegram_alert(message):
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     requests.post(url, data=data)
 
+# Fetch valid trading symbols from Binance
+def get_binance_symbols():
+    exchange = ccxt.binance()
+    try:
+        markets = exchange.load_markets()
+        return {symbol.replace("/USDT", "").lower(): symbol for symbol in markets if symbol.endswith("/USDT")}
+    except Exception as e:
+        print(f"Error fetching Binance symbols: {e}")
+        return {}
+
+binance_symbols = get_binance_symbols()
+
 # Validate Crypto Symbol
 def validate_crypto_symbol(symbol):
-    url = "https://api.coingecko.com/api/v3/coins/list"
-    try:
-        response = requests.get(url).json()
-        if isinstance(response, list):  # Ensure response is a list
-            valid_symbols = {coin.get('id', '') for coin in response if 'id' in coin}
-            return symbol.lower() in valid_symbols
-    except Exception as e:
-        print(f"Error fetching symbol list: {e}")
-    return False  # Return False if API fails
+    return symbol.lower() in binance_symbols
 
 # Fetch Crypto Price from CoinGecko
 def get_crypto_price(coin):
-    if not validate_crypto_symbol(coin):
-        return "Invalid symbol"
     url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin}&vs_currencies=usd"
     response = requests.get(url).json()
     return response.get(coin, {}).get('usd', 'Not Found')
@@ -69,29 +71,20 @@ def find_gem_coins():
 
 # Fetch Market Data with Binance and CoinGecko fallback
 def get_market_data(symbol, timeframe='1d'):
-    if not validate_crypto_symbol(symbol):
-        raise ValueError("Invalid crypto symbol")
+    if symbol not in binance_symbols:
+        raise ValueError("Invalid crypto symbol. Try using a different cryptocurrency.")
+    binance_symbol = binance_symbols[symbol]
     exchange = ccxt.binance()
     for attempt in range(5):  # Retry up to 5 times
         try:
-            bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=200)
+            bars = exchange.fetch_ohlcv(binance_symbol, timeframe=timeframe, limit=200)
             df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             return df
         except (ccxt.NetworkError, ccxt.ExchangeNotAvailable):
             print(f"Binance API error. Retrying ({attempt+1}/5)...")
             time.sleep(3)
-    
-    print("Switching to CoinGecko for market data...")
-    url = f"https://api.coingecko.com/api/v3/coins/{symbol.lower()}/market_chart?vs_currency=usd&days=30&interval=daily"
-    response = requests.get(url).json()
-    if 'prices' in response:
-        prices = response['prices']
-        df = pd.DataFrame(prices, columns=['timestamp', 'close'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df['volume'] = 0  # Set default volume to avoid KeyError
-        return df
-    raise Exception("Failed to fetch data from both Binance and CoinGecko.")
+    raise Exception("Failed to fetch data from Binance.")
 
 # Apply Technical Indicators
 def analyze_trends(df):
@@ -145,19 +138,20 @@ crypto = st.text_input("Enter Crypto (e.g., bitcoin):", "bitcoin")
 
 if st.button("Analyze Now"):
     selected_crypto = crypto.lower()
-    price = get_crypto_price(selected_crypto)
-    market_data = get_market_data(selected_crypto)
-    try:
-        analyzed_data = analyze_trends(market_data)
-        model, scaler = get_lstm_model(analyzed_data)
-        trend_prediction = predict_next_trend(model, scaler, analyzed_data)
-        st.write(f"\n🚀 {crypto.capitalize()} Price: **${price}**")
-        st.write(f"📊 AI Trend Prediction: **{trend_prediction}**")
-        
-        # Display Top 10 Gem Coins
-        st.subheader("💎 Top 10 Potential Gem Coins")
-        gem_coins = find_gem_coins()
-        for coin in gem_coins:
-            st.write(f"- {coin[0]} ({coin[1]}): {coin[2]:.2f}% 24h Change")
-    except ValueError as e:
-        st.error(str(e))
+    if selected_crypto not in binance_symbols:
+        st.error("❌ Invalid cryptocurrency symbol. Try a different one.")
+    else:
+        price = get_crypto_price(selected_crypto)
+        market_data = get_market_data(selected_crypto)
+        try:
+            analyzed_data = analyze_trends(market_data)
+            model, scaler = get_lstm_model(analyzed_data)
+            trend_prediction = predict_next_trend(model, scaler, analyzed_data)
+            st.write(f"\n🚀 {crypto.capitalize()} Price: **${price}**")
+            st.write(f"📊 AI Trend Prediction: **{trend_prediction}**")
+            st.subheader("💎 Top 10 Potential Gem Coins")
+            gem_coins = find_gem_coins()
+            for coin in gem_coins:
+                st.write(f"- {coin[0]} ({coin[1]}): {coin[2]:.2f}% 24h Change")
+        except ValueError as e:
+            st.error(str(e))
