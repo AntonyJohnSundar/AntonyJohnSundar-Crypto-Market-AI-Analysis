@@ -10,3 +10,4 @@ matplotlib
 ta
 tensorflow
 schedule
+telegram
