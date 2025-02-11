@@ -62,17 +62,6 @@ def get_crypto_price(coin):
     response = requests.get(url).json()
     return response.get(coin, {}).get('usd', 'Not Found')
 
-# Fetch Top 10 Potential Gem Coins
-def find_gem_coins():
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_asc&per_page=50&page=1"
-        response = requests.get(url).json()
-        coins = sorted(response, key=lambda x: (x.get('price_change_percentage_24h', 0), x.get('market_cap', 0)), reverse=True)[:10]
-        return [(coin['name'], coin['symbol'], coin.get('price_change_percentage_24h', 0)) for coin in coins]
-    except Exception as e:
-        print(f"Error fetching gem coins: {e}")
-        return []
-
 # Fetch Market Data with Binance and fallback to CoinGecko
 def get_market_data(symbol, timeframe='1d'):
     if symbol not in binance_symbols:
@@ -110,6 +99,7 @@ def analyze_trends(df):
     macd = MACD(df['close'])
     df['MACD'] = macd.macd()
     df['MACD_signal'] = macd.macd_signal()
+    df['Trend'] = df['MACD'] > df['MACD_signal']
     return df
 
 # Streamlit UI
@@ -126,10 +116,12 @@ if st.button("Analyze Now"):
         try:
             market_data = get_market_data(selected_crypto)
             analyzed_data = analyze_trends(market_data)
+            trend_prediction = "Bullish 🚀" if analyzed_data['Trend'].iloc[-1] else "Bearish ⚠️"
+            
             st.write(f"\n🚀 {crypto.capitalize()} Price: **${price}**")
+            st.subheader(f"📈 Market Trend - {trend_prediction}")
             
             # Display Market Trend Chart
-            st.subheader("📈 Market Trend")
             fig, ax = plt.subplots(figsize=(10, 5))
             ax.plot(market_data['timestamp'], market_data['close'], label='Close Price', color='blue')
             ax.set_xlabel("Date")
@@ -137,14 +129,5 @@ if st.button("Analyze Now"):
             ax.set_title(f"{crypto.capitalize()} Market Trend")
             ax.legend()
             st.pyplot(fig)
-            
-            # Display Top 10 Gem Coins
-            st.subheader("💎 Top 10 Potential Gem Coins")
-            gem_coins = find_gem_coins()
-            if gem_coins:
-                for coin in gem_coins:
-                    st.write(f"- {coin[0]} ({coin[1]}): {coin[2]:.2f}% 24h Change")
-            else:
-                st.write("No gem coins found. Try again later.")
         except ValueError as e:
             st.error(str(e))
