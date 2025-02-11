@@ -103,8 +103,8 @@ def get_market_data(symbol, timeframe='1d'):
 
 # Apply Technical Indicators
 def analyze_trends(df):
-    if df.shape[0] < 50:
-        raise ValueError("Insufficient market data for AI trend analysis. Please try a different cryptocurrency.")
+    if df.shape[0] < 10:  # Allow AI to work with at least 10 rows instead of 50
+        raise ValueError("Insufficient market data for AI trend analysis. Try again later.")
     df['RSI'] = RSIIndicator(df['close']).rsi()
     df['SMA'] = SMAIndicator(df['close'], window=20).sma_indicator()
     macd = MACD(df['close'])
