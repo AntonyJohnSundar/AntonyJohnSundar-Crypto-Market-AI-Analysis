@@ -29,6 +29,7 @@ nltk.download('vader_lexicon')
 sia = SentimentIntensityAnalyzer()
 
 latest_trend = "Loading..."
+selected_crypto = "bitcoin"  # Default to Bitcoin
 
 # Telegram Bot Configuration
 TELEGRAM_BOT_TOKEN = "your_telegram_bot_token"
@@ -39,24 +40,25 @@ def send_telegram_alert(message):
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     requests.post(url, data=data)
 
+# Validate Crypto Symbol
+def validate_crypto_symbol(symbol):
+    url = "https://api.coingecko.com/api/v3/coins/list"
+    response = requests.get(url).json()
+    valid_symbols = {coin['id'] for coin in response}
+    return symbol.lower() in valid_symbols
+
 # Fetch Crypto Price from CoinGecko
 def get_crypto_price(coin):
+    if not validate_crypto_symbol(coin):
+        return "Invalid symbol"
     url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin}&vs_currencies=usd"
     response = requests.get(url).json()
     return response.get(coin, {}).get('usd', 'Not Found')
 
-# Fetch Crypto News Sentiment
-def get_crypto_news_sentiment():
-    url = "https://cryptonews.com/news/"
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    headlines = [h.text.strip() for h in soup.find_all('h4')][:5]
-    sentiment_scores = [sia.polarity_scores(headline)['compound'] for headline in headlines]
-    avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
-    return avg_sentiment
-
 # Fetch Market Data with Binance and CoinGecko fallback
 def get_market_data(symbol, timeframe='1d'):
+    if not validate_crypto_symbol(symbol):
+        raise ValueError("Invalid crypto symbol")
     exchange = ccxt.binance()
     for attempt in range(5):  # Retry up to 5 times
         try:
@@ -92,34 +94,57 @@ def analyze_trends(df):
     df['OBV'] = obv.on_balance_volume()
     return df
 
-# Predict Next Trend and Schedule Auto-Updates
-def update_trend():
-    global latest_trend
-    try:
-        market_data = get_market_data("bitcoin")
-        analyzed_data = analyze_trends(market_data)
-        model, scaler = get_lstm_model(analyzed_data)
-        latest_trend = predict_next_trend(model, scaler, analyzed_data)
-        send_telegram_alert(f"📢 Crypto Alert: {latest_trend}")
-    except Exception as e:
-        latest_trend = f"Error: {e}"
+# Load or Train LSTM AI Model for Trend Prediction
+def get_lstm_model(df):
+    model_path = "lstm_model.h5"
+    scaler_path = "scaler.npy"
+    df = df.dropna()
+    df['Target'] = (df['close'].shift(-1) > df['close']).astype(int)
+    features = ['RSI', 'SMA', 'MACD', 'MACD_signal', 'Bollinger High', 'Bollinger Low', 'OBV']
+    X = df[features].values
+    y = df['Target'].values
+    
+    scaler = MinMaxScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    if os.path.exists(model_path) and os.path.exists(scaler_path):
+        model = load_model(model_path)
+        scaler = np.load(scaler_path, allow_pickle=True).item()
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+        model = Sequential([
+            LSTM(30, return_sequences=True, input_shape=(X_train.shape[1], 1)),
+            Dropout(0.1),
+            LSTM(30, return_sequences=False),
+            Dropout(0.1),
+            Dense(15),
+            Dense(1, activation='sigmoid')
+        ])
+        
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        model.fit(X_train, y_train, epochs=5, batch_size=16, validation_data=(X_test, y_test), verbose=0)
+        model.save(model_path)
+        np.save(scaler_path, scaler)
+    
+    return model, scaler
 
-schedule.every(5).minutes.do(update_trend)
-
-def run_scheduler():
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-threading.Thread(target=run_scheduler, daemon=True).start()
+# Predict Next Trend
+def predict_next_trend(model, scaler, df):
+    latest_data = df.iloc[-1:][['RSI', 'SMA', 'MACD', 'MACD_signal', 'Bollinger High', 'Bollinger Low', 'OBV']].values
+    latest_scaled = scaler.transform(latest_data)
+    prediction = model.predict(latest_scaled)[0][0]
+    return "Bullish 🚀" if prediction > 0.5 else "Bearish ⚠️"
 
 # Streamlit UI
 st.title("🚀 AI-Powered Crypto Analysis (Live Updates)")
-st.write(f"📊 AI Trend Prediction (Live): **{latest_trend}**")
 crypto = st.text_input("Enter Crypto (e.g., bitcoin):", "bitcoin")
 
 if st.button("Analyze Now"):
-    price = get_crypto_price(crypto)
-    sentiment = get_crypto_news_sentiment()
+    selected_crypto = crypto.lower()
+    price = get_crypto_price(selected_crypto)
+    market_data = get_market_data(selected_crypto)
+    analyzed_data = analyze_trends(market_data)
+    model, scaler = get_lstm_model(analyzed_data)
+    trend_prediction = predict_next_trend(model, scaler, analyzed_data)
     st.write(f"\n🚀 {crypto.capitalize()} Price: **${price}**")
-    st.write(f"📰 News Sentiment: **{'Bullish' if sentiment > 0 else 'Bearish' if sentiment < 0 else 'Neutral'} ({sentiment:.2f})**")
+    st.write(f"📊 AI Trend Prediction: **{trend_prediction}**")
